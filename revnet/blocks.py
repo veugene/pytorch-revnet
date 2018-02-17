@@ -44,13 +44,11 @@ def possible_downsample(x, in_channels, out_channels, subsample=False,
 
 class rev_block_function(Function):
     @staticmethod
-    def residual(x, in_channels, out_channels, modules):
+    def residual(x, modules):
         """Compute a pre-activation residual function.
 
         Args:
             x (Variable): The input variable
-            in_channels (int): Number of channels of x
-            out_channels (int): Number of channels of the output
 
         Returns:
             out (Variable): The result of the computation
@@ -79,17 +77,13 @@ class rev_block_function(Function):
             x2_ = possible_downsample(x2, in_channels, out_channels,
                                       subsample, use_gpu, device)
 
-            f_x2 = rev_block_function.residual(x2,
-                                               in_channels,
-                                               out_channels,
-                                               f_modules)
+            # in_channels, out_channels
+            f_x2 = rev_block_function.residual(x2, f_modules)
             
             y1 = f_x2 + x1_
             
-            g_y1 = rev_block_function.residual(y1,
-                                               out_channels,
-                                               out_channels,
-                                               g_modules)
+            # out_channels, out_channels
+            g_y1 = rev_block_function.residual(y1, g_modules)
 
             y2 = g_y1 + x2_
             
@@ -101,8 +95,7 @@ class rev_block_function(Function):
         return y
 
     @staticmethod
-    def _backward(output, in_channels, out_channels, f_modules, g_modules,
-                  use_gpu=False, device=None):
+    def _backward(output, f_modules, g_modules, use_gpu=False, device=None):
 
         y1, y2 = torch.chunk(output, 2, dim=1)
         with torch.no_grad():
@@ -112,15 +105,11 @@ class rev_block_function(Function):
                 y1 = to_cuda(y1, device)
                 y2 = to_cuda(y2, device)
 
-            x2 = y2 - rev_block_function.residual(y1,
-                                                  out_channels,
-                                                  out_channels,
-                                                  g_modules)
+            # out_channels, out_channels
+            x2 = y2 - rev_block_function.residual(y1, g_modules)
 
-            x1 = y1 - rev_block_function.residual(x2,
-                                                  in_channels,
-                                                  out_channels,
-                                                  f_modules)
+            # in_channels, out_channels
+            x1 = y1 - rev_block_function.residual(x2, f_modules)
 
             del y1, y2
             x1, x2 = x1.data, x2.data
@@ -149,17 +138,13 @@ class rev_block_function(Function):
             x2_ = possible_downsample(x2, in_channels, out_channels,
                                       subsample, use_gpu, device)
 
-            f_x2 = rev_block_function.residual(x2,
-                                               in_channels,
-                                               out_channels,
-                                               f_modules)
+            # in_channels, out_channels
+            f_x2 = rev_block_function.residual(x2, f_modules)
 
             y1_ = f_x2 + x1_
 
-            g_y1 = rev_block_function.residual(y1_,
-                                               out_channels,
-                                               out_channels,
-                                               g_modules)
+            # in_channels, out_channels
+            g_y1 = rev_block_function.residual(y1_, g_modules)
 
             y2_ = g_y1 + x2_
             
@@ -247,8 +232,6 @@ class rev_block_function(Function):
         else:
             output = ctx.activations.pop()
             x = rev_block_function._backward(output,
-                                             ctx.in_channels,
-                                             ctx.out_channels,
                                              ctx.f_modules,
                                              ctx.g_modules,
                                              ctx.use_gpu,
