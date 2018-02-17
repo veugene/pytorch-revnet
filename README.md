@@ -12,10 +12,6 @@ strongly recommended.
 The training script requires [tqdm](https://pypi.python.org/pypi/tqdm) for the
 progress bar.
 
-The unittests require the TestCase implemented by the PyTorch project. The
-module can be downloaded
-[here](https://github.com/pytorch/pytorch/blob/master/test/common.py).
-
 
 ## Note
 
@@ -34,5 +30,4 @@ python train_cifar.py --model revnet38 --clip 0.25
 
 | Model    | Accuracy | Memory Usage | Params |
 |----------|----------|--------------|--------|
-| resnet32 | 92.02%   | 1271 MB      | 0.47 M |
 | revnet38 | 91.98%   | 660 MB       | 0.47 M |
