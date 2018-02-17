@@ -5,6 +5,31 @@ from torch.autograd import Variable
 from .blocks import rev_block
 
 
+class batch_normalization(nn.Module):
+    def __init__(self, in_channels, out_channels, ndim=2, *args, **kwargs):
+        super(batch_normalization, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.ndim = ndim
+        if ndim==1:
+            self.norm_op = nn.BatchNorm1d
+        elif ndim==2:
+            self.norm_op = nn.BatchNorm2d
+        elif ndim==3:
+            self.norm_op = nn.BatchNorm3d
+        else:
+            raise ValueError("ndim must be 1, 2 or 3")
+        if 'num_features' in kwargs:
+            raise TypeError("must use \'in_channels\' instead of "
+                            "\'num_features\'")
+        self.norm = self.norm_op(*args,
+                                 num_features=in_channels,
+                                 **kwargs)
+        
+    def forward(self, x):
+        return self.norm(x)
+    
+
 class basic_block(rev_block):
     def __init__(self, in_channels, out_channels, activations,
                  subsample=False):
@@ -12,7 +37,9 @@ class basic_block(rev_block):
                                           out_channels=out_channels,
                                           activations=activations,
                                           subsample=subsample)
-        #self.add_module(nn.BatchNorm2d, self.in_channels)
+        self.add_module(batch_normalization,
+                        in_channels=in_channels//2,
+                        out_channels=out_channels//2)
         self.add_module(nn.ReLU)
         self.add_module(nn.Conv2d,
                         in_channels=in_channels//2,
@@ -20,7 +47,9 @@ class basic_block(rev_block):
                         kernel_size=3,
                         padding=1,
                         stride=2 if subsample else 1)
-        #self.add_module(nn.BatchNorm2d, self.out_channels)
+        self.add_module(batch_normalization,
+                        in_channels=out_channels//2,
+                        out_channels=out_channels//2)
         self.add_module(nn.ReLU)
         self.add_module(nn.Conv2d,
                         in_channels=out_channels//2,
