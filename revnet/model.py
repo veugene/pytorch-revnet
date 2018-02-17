@@ -7,28 +7,57 @@ from .blocks import (batch_normalization,
                      basic_block)
 
 
-class revnet(nn.Module):
+class base_model(nn.Module):
+    """
+    The base model for implementing a reversible network. This can be
+    subclassed to create a custom model.
+    
+    Note the special care required in the forward() method when using
+    rev_block objects: final rev_block activation must be stored in the 
+    self.activations list.
+    """
+    def __init__(self):
+        super(base_model, self).__init__()
+        self.activations = []
+        
+    def forward(self):
+        '''
+        NOTE: The activation of the final call to a rev_block should be
+              appended to self.activations, so that activations of all
+              rev_block objects could be reconstructed from it druing
+              backprop.
+        '''
+        raise NotImplementedError
+        
+    def cuda(self, device=None):
+        for m in self.layers:
+            m.cuda()
+        return self._apply(lambda t: t.cuda(device))
+    
+    def cpu(self):
+        for m in self.layers:
+            m.cpu()
+        return self._apply(lambda t: t.cpu())
+    
+    def free(self):
+        del self.activations[:]
+
+
+class revnet(base_model):
     def __init__(self, units, filters, subsample, classes):
         """
-        Parameters
-        ----------
-
-        units: list-like
-            Number of residual units in each group
-
-        filters: list-like
-            Number of filters in each unit including the inputlayer, so it is
-            one item longer than units
-
-        subsample: list-like
-            List of boolean values for each block, specifying whether it should do 2x spatial subsampling
-
-        bottleneck: boolean
-            Wether to use the bottleneck residual or the basic residual
+        Implements a reversible ResNet.
+        
+        Args:
+            units (list) : Number of residual units in each group
+            filters (list) Number of filters in each unit including the
+                inputlayer, so it is one item longer than units.
+            subsample (list) List of boolean values for each block,
+                specifying whether it should do 2x spatial subsampling.
+            classes (int) : The number of classes to predict over.
         """
         super(revnet, self).__init__()
         self.name = self.__class__.__name__
-        self.activations = []
         self.block = basic_block
         self.layers = nn.ModuleList()
 
@@ -47,16 +76,6 @@ class revnet(nn.Module):
                                               self.activations))
         self.bn_last = nn.BatchNorm2d(filters[-1])
         self.fc = nn.Linear(filters[-1], classes)
-        
-    def cuda(self, device=None):
-        for m in self.layers:
-            m.cuda()
-        return self._apply(lambda t: t.cuda(device))
-    
-    def cpu(self):
-        for m in self.layers:
-            m.cpu()
-        return self._apply(lambda t: t.cpu())
 
     def forward(self, x):
         for layer in self.layers:
@@ -68,9 +87,6 @@ class revnet(nn.Module):
         x = self.fc(x)
 
         return x
-    
-    def free(self):
-        del self.activations[:]
         
         
 def revnet38():

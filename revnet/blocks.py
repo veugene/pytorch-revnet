@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.autograd import Function, Variable
 
 
-def unpack_modules(module_stack):
+def _unpack_modules(module_stack):
     params = []
     buffs = []
     for m in module_stack:
@@ -16,15 +16,15 @@ def unpack_modules(module_stack):
     return tuple(params), tuple(buffs)
 
 
-def to_cuda(x, device=None):
+def _to_cuda(x, device=None):
     x.data = x.data.cuda(device)
     if x._grad is not None:
         x._grad.data = x._grad.data.cuda(device)
     return x
 
 
-def possible_downsample(x, in_channels, out_channels, subsample=False,
-                        use_gpu=False, device=None):
+def _possible_downsample(x, in_channels, out_channels, subsample=False,
+                         use_gpu=False, device=None):
     out = x
     if subsample:
         out = F.avg_pool2d(out, 2, 2)
@@ -36,23 +36,23 @@ def possible_downsample(x, in_channels, out_channels, subsample=False,
                                    out.size(3)),
                        requires_grad=True)
         if use_gpu:
-            pad = to_cuda(pad, device)
+            pad = _to_cuda(pad, device)
         temp = torch.cat([pad, out], dim=1)
         out = torch.cat([temp, pad], dim=1)
     return out
 
 
-class rev_block_function(Function):
+class _rev_block_function(Function):
     @staticmethod
     def residual(x, modules):
-        """Compute a pre-activation residual function.
+        """
+        Compute a pre-activation residual function.
 
         Args:
-            x (Variable): The input variable
+            x (Variable) : The input variable.
 
         Returns:
-            out (Variable): The result of the computation
-
+            out (Variable) : The result of the computation.
         """
         out = x
         for m in modules:
@@ -69,21 +69,21 @@ class rev_block_function(Function):
             x1 = Variable(x1.contiguous())
             x2 = Variable(x2.contiguous())
             if use_gpu:
-                x1 = to_cuda(x1, device)
-                x2 = to_cuda(x2, device)
+                x1 = _to_cuda(x1, device)
+                x2 = _to_cuda(x2, device)
 
-            x1_ = possible_downsample(x1, in_channels, out_channels,
-                                      subsample, use_gpu, device)
-            x2_ = possible_downsample(x2, in_channels, out_channels,
-                                      subsample, use_gpu, device)
+            x1_ = _possible_downsample(x1, in_channels, out_channels,
+                                       subsample, use_gpu, device)
+            x2_ = _possible_downsample(x2, in_channels, out_channels,
+                                       subsample, use_gpu, device)
 
             # in_channels, out_channels
-            f_x2 = rev_block_function.residual(x2, f_modules)
+            f_x2 = _rev_block_function.residual(x2, f_modules)
             
             y1 = f_x2 + x1_
             
             # out_channels, out_channels
-            g_y1 = rev_block_function.residual(y1, g_modules)
+            g_y1 = _rev_block_function.residual(y1, g_modules)
 
             y2 = g_y1 + x2_
             
@@ -102,14 +102,14 @@ class rev_block_function(Function):
             y1 = Variable(y1.contiguous())
             y2 = Variable(y2.contiguous())
             if use_gpu:
-                y1 = to_cuda(y1, device)
-                y2 = to_cuda(y2, device)
+                y1 = _to_cuda(y1, device)
+                y2 = _to_cuda(y2, device)
 
             # out_channels, out_channels
-            x2 = y2 - rev_block_function.residual(y1, g_modules)
+            x2 = y2 - _rev_block_function.residual(y1, g_modules)
 
             # in_channels, out_channels
-            x1 = y1 - rev_block_function.residual(x2, f_modules)
+            x1 = y1 - _rev_block_function.residual(x2, f_modules)
 
             del y1, y2
             x1, x2 = x1.data, x2.data
@@ -130,26 +130,26 @@ class rev_block_function(Function):
             x1.retain_grad()
             x2.retain_grad()
             if use_gpu:
-                x1 = to_cuda(x1, device)
-                x2 = to_cuda(x2, device)
+                x1 = _to_cuda(x1, device)
+                x2 = _to_cuda(x2, device)
 
-            x1_ = possible_downsample(x1, in_channels, out_channels,
-                                      subsample, use_gpu, device)
-            x2_ = possible_downsample(x2, in_channels, out_channels,
-                                      subsample, use_gpu, device)
+            x1_ = _possible_downsample(x1, in_channels, out_channels,
+                                       subsample, use_gpu, device)
+            x2_ = _possible_downsample(x2, in_channels, out_channels,
+                                       subsample, use_gpu, device)
 
             # in_channels, out_channels
-            f_x2 = rev_block_function.residual(x2, f_modules)
+            f_x2 = _rev_block_function.residual(x2, f_modules)
 
             y1_ = f_x2 + x1_
 
             # in_channels, out_channels
-            g_y1 = rev_block_function.residual(y1_, g_modules)
+            g_y1 = _rev_block_function.residual(y1_, g_modules)
 
             y2_ = g_y1 + x2_
             
-            f_params, f_buffs = unpack_modules(f_modules)
-            g_params, g_buffs = unpack_modules(g_modules)
+            f_params, f_buffs = _unpack_modules(f_modules)
+            g_params, g_buffs = _unpack_modules(g_modules)
 
             dd1 = torch.autograd.grad(y2_, (y1_,) + tuple(g_params), dy2,
                                       retain_graph=True)
@@ -177,23 +177,23 @@ class rev_block_function(Function):
     def forward(ctx, x, in_channels, out_channels, f_modules, g_modules,
                 activations, subsample=False, use_gpu=False, device=None,
                 *args):
-        """Compute forward pass including boilerplate code.
+        """
+        Compute forward pass including boilerplate code.
 
         This should not be called directly, use the apply method of this class.
 
         Args:
-            ctx (Context):                  Context object, see PyTorch docs
-            x (Tensor):                     4D input tensor
-            in_channels (int):              Number of channels on input
-            out_channels (int):             Number of channels on output
-            f_modules (List):               Sequence of modules for F function
-            g_modules (List):               Sequence of modules for G function
-            activations (List):             Activation stack
-            subsample (bool):               Whether to do 2x spatial pooling
-            use_gpu (bool):                 Whether to use gpu
-            device (int)                    GPU to use
-            *args:                          Should contain all the
-                                            Parameters of the module
+            ctx (Context) : Context object, see PyTorch docs.
+            x (Tensor) : 4D input tensor.
+            in_channels (int) : Number of channels on input.
+            out_channels (int) : Number of channels on output.
+            f_modules (List) : Sequence of modules for F function.
+            g_modules (List) : Sequence of modules for G function.
+            activations (List) : Activation stack.
+            subsample (bool) : Whether to do 2x spatial pooling.
+            use_gpu (bool) : Whether to use gpu.
+            device (int) : GPU to use.
+            *args: Should contain all the parameters of the module.
         """
         
         # if subsampling, information is lost and we need to save the input
@@ -212,14 +212,14 @@ class rev_block_function(Function):
         ctx.use_gpu = use_gpu
         ctx.device = device
 
-        y = rev_block_function._forward(x,
-                                        in_channels,
-                                        out_channels,
-                                        f_modules,
-                                        g_modules,
-                                        subsample,
-                                        use_gpu,
-                                        device)
+        y = _rev_block_function._forward(x,
+                                         in_channels,
+                                         out_channels,
+                                         f_modules,
+                                         g_modules,
+                                         subsample,
+                                         use_gpu,
+                                         device)
 
         return y.data
 
@@ -231,32 +231,59 @@ class rev_block_function(Function):
             x = ctx.activations.pop()
         else:
             output = ctx.activations.pop()
-            x = rev_block_function._backward(output,
-                                             ctx.f_modules,
-                                             ctx.g_modules,
-                                             ctx.use_gpu,
-                                             ctx.device)
+            x = _rev_block_function._backward(output,
+                                              ctx.f_modules,
+                                              ctx.g_modules,
+                                              ctx.use_gpu,
+                                              ctx.device)
 
-        dx, dfw, dgw = rev_block_function._grad(x,
-                                                grad_out,
-                                                ctx.in_channels,
-                                                ctx.out_channels,
-                                                ctx.f_modules,
-                                                ctx.g_modules,
-                                                ctx.activations,
-                                                ctx.subsample,
-                                                ctx.use_gpu,
-                                                ctx.device)
+        dx, dfw, dgw = _rev_block_function._grad(x,
+                                                 grad_out,
+                                                 ctx.in_channels,
+                                                 ctx.out_channels,
+                                                 ctx.f_modules,
+                                                 ctx.g_modules,
+                                                 ctx.activations,
+                                                 ctx.subsample,
+                                                 ctx.use_gpu,
+                                                 ctx.device)
 
         return (dx,) + (None,)*8 + tuple(dfw) + tuple(dgw)
 
 
 class rev_block(nn.Module):
+    """
+    The base reversible block module. This implements a generic reversible
+    block whose inputs can be recomputed from its outputs during backprop.
+    The block can be composed out of any arbitrary stack of layers (modules),
+    added via the add_module() method.
+    
+    To create custom blocks, it is recommended to subclass this class and
+    add all necessary modules in __init__(). The forward() method must be left
+    unmodified.
+    
+    Args:
+        in_channels (int) : The number of input channels.
+        out_channels (int) : The number of output channels.
+        activations (list) : A list must be created in the model that uses
+            rev_block objects in order to store activations, as needed. Blocks
+            such as this one pass around activations through this list.
+        f_modules (list) : A list of modules implementing the f() path of a
+            reversible block.
+        g_modules (list) : A list of modules implemetning the g() path of a
+            reversible block.
+        subsample (bool) : Whether to perform 2x spatial subsampling.
+        use_gpu (bool) : Whether to move compute and memory to GPU.
+        device (int) : The GPU device ID to use if using GPU.
+
+    Returns:
+        out (Variable): The result of the computation
+    """
     def __init__(self, in_channels, out_channels, activations,
                  f_modules=None, g_modules=None, subsample=False,
                  use_gpu=False, device=None):
         super(rev_block, self).__init__()
-        # NOTE: channels are only counted for possible_downsample()
+        # NOTE: channels are only counted for _possible_downsample()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.activations = activations
@@ -283,14 +310,27 @@ class rev_block(nn.Module):
             m.cpu()
         return self
 
-    '''
-    Only keyword arguments are allowed because the following arguments must
-    be handled differently for f_modules and g_modules:
-    
-    in_channels, out_channels, stride
-    '''
     def add_module(self, module, in_channels=None, out_channels=None,
                    stride=None, **kwargs):
+        '''
+        Symmetrically stacks a module onto both the f() path and the g() path
+        of the reversible block. The sequence of modules defines f() and g().
+        
+        Modules are instantiated anew for each path; keyword arguments are
+        used to instantiate the module.  Only keyword arguments are allowed
+        because the following arguments must be handled differently for
+        f_modules and g_modules:
+        
+        in_channels, out_channels, stride
+        
+        Args:
+            module (Module class) : An non-instantiated class specifiying a
+                module to add to both the f() and g() paths.
+            in_channels (int) : Use with modules that take this argument.
+            out_channels (int) : Use with modules that take this argument.
+            stride (int) : Use with modules that take this argument.
+            **kwargs : Keyword arguments to instantiate the module.
+        '''
         f_kwargs = dict(kwargs.items())
         g_kwargs = dict(kwargs.items())
         if in_channels is not None:
@@ -319,23 +359,39 @@ class rev_block(nn.Module):
 
     def forward(self, x):
         # Unpack parameters and buffers
-        f_params, f_buffs = unpack_modules(self.f_modules)
-        g_params, g_buffs = unpack_modules(self.g_modules)
+        f_params, f_buffs = _unpack_modules(self.f_modules)
+        g_params, g_buffs = _unpack_modules(self.g_modules)
         
-        return rev_block_function.apply(x,
-                                        self.in_channels//2,
-                                        self.out_channels//2,
-                                        self.f_modules,
-                                        self.g_modules,
-                                        self.activations,
-                                        self.subsample,
-                                        self.use_gpu,
-                                        self.device,
-                                        *f_params,
-                                        *g_params)
+        return _rev_block_function.apply(x,
+                                         self.in_channels//2,
+                                         self.out_channels//2,
+                                         self.f_modules,
+                                         self.g_modules,
+                                         self.activations,
+                                         self.subsample,
+                                         self.use_gpu,
+                                         self.device,
+                                         *f_params,
+                                         *g_params)
 
 
 class batch_normalization(nn.Module):
+    """
+    A wrapper for BatchNorm that can be used in rev_block. Since in_channels
+    needs to be sometimes different on the f() and g() paths of a rev_block,
+    it is useful to specify in_channels and out_channels arguments when
+    adding a normalization module to a rev_block.
+    
+    Args:
+        in_channels (int) : The number of input channels.
+        out_channels (int) : The number of output channels.
+        ndim (int) : The number of spatial dimensions (1, 2 or 3).
+        *args : Passed to BatchNorm.
+        **kwargs : Passed to BatchNorm.
+    
+    Returns:
+        out (Variable): The result of the computation.
+    """
     def __init__(self, in_channels, out_channels, ndim=2, *args, **kwargs):
         super(batch_normalization, self).__init__()
         self.in_channels = in_channels
@@ -361,6 +417,18 @@ class batch_normalization(nn.Module):
     
 
 class basic_block(rev_block):
+    """
+    Implements the standard ResNet "basic block" as a reversible block.
+    
+    Args:
+        in_channels (int) : The number of input channels.
+        out_channels (int) : The number of output channels.
+        activations (list) : List to track activations, as in rev_block.
+        subsample (bool) : Whether to perform 2x spatial subsampling.
+        
+    Returns:
+        out (Variable): The result of the computation.
+    """
     def __init__(self, in_channels, out_channels, activations,
                  subsample=False):
         super(basic_block, self).__init__(in_channels=in_channels,

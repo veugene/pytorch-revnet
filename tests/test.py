@@ -4,8 +4,8 @@ import torch.autograd
 from torch.autograd import Variable
 import numpy as np
 
-from revnet import (rev_block,
-                    rev_block_function)
+from revnet.blocks import (rev_block,
+                           _rev_block_function)
 from fcn_maker.blocks import convolution
 
 
@@ -58,7 +58,7 @@ class trivial_module(torch.nn.Module):
         return x*2
 
 if __name__=='__main__':
-    print("TESTING FORWARD PASS")
+    print("TESTING: _forward()")
     model = simple_net(in_channels=4, out_channels=4)
     data = np.random.rand(5,4,25,25).astype(np.float32)
     data = Variable(torch.from_numpy(data))
@@ -73,7 +73,7 @@ if __name__=='__main__':
         print("> FAIL : For input of size {}, returned output of "
               "wrong size {}.".format(data.size(), out.size()))
     
-    print("TESTING INPUT RECREATION (DIRECT FORWARD & BACKWARD)")
+    print("TESTING INPUT RECREATION: _forward(), _backward()")
     data = np.random.rand(5,4,25,25).astype(np.float32)
     #data = np.ones((1,4,1,1), dtype=np.float32)
     data = torch.from_numpy(data)
@@ -94,16 +94,14 @@ if __name__=='__main__':
     #f_modules = [trivial_module()]
     #g_modules = [trivial_module()]
     try:
-        y = rev_block_function._forward(data,
-                                        in_channels=2,
-                                        out_channels=2,
-                                        f_modules=f_modules,
-                                        g_modules=g_modules)
-        z = rev_block_function._backward(y.data,
+        y = _rev_block_function._forward(data,
                                          in_channels=2,
                                          out_channels=2,
                                          f_modules=f_modules,
                                          g_modules=g_modules)
+        z = _rev_block_function._backward(y.data,
+                                          f_modules=f_modules,
+                                          g_modules=g_modules)
     except:
         print("> FAIL")
         raise
@@ -113,7 +111,7 @@ if __name__=='__main__':
     else:
         print("> FAIL : Output differs from input.")
 
-    print("TESTING AUTOGRAD BACKWARD")
+    print("TESTING: backward()")
     model = simple_net(in_channels=4, out_channels=4)
     data = np.random.rand(5,4,25,25).astype(np.float32)
     data = Variable(torch.from_numpy(data))
