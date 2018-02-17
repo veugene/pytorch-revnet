@@ -6,8 +6,6 @@ import argparse
 
 from tqdm import tqdm
 
-# import matplotlib.pyplot as plt
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -20,7 +18,7 @@ from torch.optim.lr_scheduler import StepLR
 import revnet
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model", metavar="NAME",
+parser.add_argument("--model", metavar="NAME", default='revnet38', type=str,
                     help="what model to use")
 parser.add_argument("--load", metavar="PATH",
                     help="load a previous model state")
@@ -40,45 +38,33 @@ parser.add_argument("--stats", action="store_true",
                     help="record and plot some stats")
 
 
-# Check if CUDA is avaliable
-CUDA = torch.cuda.is_available()
-
-best_acc = 0
-
-
-def main():
-    global best_acc
-
+def main(use_gpu=False):
     args = parser.parse_args()
-
+    
+    # Set up model.
     model = getattr(revnet, args.model)()
-
+    if use_gpu:
+        model.cuda()
+    if args.load is not None:
+        load(model, args.load)
+    
+    # Set up experiment directory.
     exp_id = "cifar_{0}_{1:%Y-%m-%d}_{1:%H-%M-%S}".format(model.name,
                                                           datetime.now())
-
     path = os.path.join("./experiments/", exp_id, "cmd.sh")
     if not os.path.exists(os.path.dirname(path)):
-            os.makedirs(os.path.dirname(path))
-
+        os.makedirs(os.path.dirname(path))
     with open(path, 'w') as f:
         f.write(' '.join(sys.argv))
 
-    if CUDA:
-        model.cuda()
-
-    if args.load is not None:
-        load(model, args.load)
-
+    # Set up trainer.
     criterion = nn.CrossEntropyLoss()
-
     optimizer = optim.SGD(model.parameters(), lr=args.lr*10,
                           momentum=0.9, weight_decay=args.weight_decay)
-
     scheduler = StepLR(optimizer, step_size=50, gamma=0.1)
 
+    # Prepare data.
     print("Prepairing data...")
-
-    # Load data
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
@@ -123,6 +109,7 @@ def main():
         vaccs = []
 
     print("\nTraining model...")
+    best_acc = 0
     for epoch in range(args.epochs):
         scheduler.step()
         loss, train_acc = train(epoch, model, criterion, optimizer,
@@ -169,7 +156,7 @@ def train(epoch, model, criterion, optimizer, trainloader, clip):
     for i, data in enumerate(t):
         inputs, labels = data
 
-        if CUDA:
+        if use_gpu:
             inputs, labels = inputs.cuda(), labels.cuda()
 
         inputs, labels = Variable(inputs), Variable(labels)
@@ -181,8 +168,7 @@ def train(epoch, model, criterion, optimizer, trainloader, clip):
         loss.backward()
 
         # Free the memory used to store activations
-        if type(model) is revnet.RevNet:
-            model.free()
+        model.free()
 
         if clip > 0:
             torch.nn.utils.clip_grad_norm(model.parameters(), clip)
@@ -208,13 +194,12 @@ def validate(model, valloader):
 
     for data in valloader:
         images, labels = data
-        if CUDA:
+        if use_gpu:
             images, labels = images.cuda(), labels.cuda()
         outputs = model(Variable(images))
 
         # Free the memory used to store activations
-        if type(model) is revnet.RevNet:
-            model.free()
+        model.free()
 
         _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
@@ -240,4 +225,5 @@ def save_checkpoint(model, exp_id):
 
 
 if __name__ == "__main__":
-    main()
+    use_gpu = torch.cuda.is_available()
+    main(use_gpu=use_gpu)
