@@ -1,12 +1,56 @@
 import torch
+import torch.nn as nn
 import torch.autograd
 from torch.autograd import Variable
 import numpy as np
 
 from revnet import (rev_block,
-                    rev_block_function,
-                    simple_net)
+                    rev_block_function)
 from fcn_maker.blocks import convolution
+
+
+class simple_block(rev_block):
+    def __init__(self, in_channels, out_channels, activations,
+                 subsample=False):
+        f_modules = [convolution(in_channels=in_channels//2,
+                                 out_channels=out_channels//2,
+                                 kernel_size=3,
+                                 ndim=2,
+                                 init='kaiming_normal',
+                                 padding=1)]
+        g_modules = [convolution(in_channels=in_channels//2,
+                                 out_channels=out_channels//2,
+                                 kernel_size=3,
+                                 ndim=2,
+                                 init='kaiming_normal',
+                                 padding=1)]
+        super(simple_block, self).__init__(in_channels=in_channels,
+                                           out_channels=out_channels,
+                                           activations=activations,
+                                           f_modules=f_modules,
+                                           g_modules=g_modules,
+                                           subsample=False)
+        
+
+class simple_net(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(simple_net, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.activations = []
+        self.layers = [simple_block(in_channels=in_channels,
+                                    out_channels=out_channels,
+                                    activations=self.activations)]
+        
+    def forward(self, x):
+        out = x
+        for l in self.layers:
+            out = l(x)
+            
+        # Save last output for backward
+        self.activations.append(out.data)
+        
+        return out
 
 
 class trivial_module(torch.nn.Module):

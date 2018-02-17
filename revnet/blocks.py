@@ -6,8 +6,6 @@ import torch.nn.functional as F
 
 from torch.autograd import Function, Variable
 
-from fcn_maker.blocks import convolution
-
 
 def unpack_modules(module_stack):
     params = []
@@ -18,30 +16,29 @@ def unpack_modules(module_stack):
     return tuple(params), tuple(buffs)
 
 
-def possible_downsample(x, in_channels, out_channels, subsample=False):
-    out = x
+def to_cuda(x, device=None):
+    x.data = x.data.cuda(device)
+    if x._grad is not None:
+        x._grad.data = x._grad.data.cuda(device)
+    return x
 
-    # Downsample image
+
+def possible_downsample(x, in_channels, out_channels, subsample=False,
+                        use_gpu=False, device=None):
+    out = x
     if subsample:
         out = F.avg_pool2d(out, 2, 2)
-
-    # Pad with empty channels
     if in_channels < out_channels:
+        # Pad with empty channels
         pad = Variable(torch.zeros(out.size(0),
-                                   (out_channels - in_channels) // 2,
-                                   out.size(2), out.size(3)),
+                                   (out_channels-in_channels)//2,
+                                   out.size(2),
+                                   out.size(3)),
                        requires_grad=True)
+        if use_gpu:
+            pad = to_cuda(pad, device)
         temp = torch.cat([pad, out], dim=1)
         out = torch.cat([temp, pad], dim=1)
-
-    ## If we did nothing, add zero tensor, so the output of this function
-    ## depends on the input in the graph
-    #try: out
-    #except:
-        #injection = Variable(torch.zeros_like(x.data), requires_grad=True)
-
-        #out = x + injection
-
     return out
 
 
@@ -66,16 +63,21 @@ class rev_block_function(Function):
 
     @staticmethod
     def _forward(x, in_channels, out_channels, f_modules, g_modules,
-                 subsample=False):
+                 subsample=False, use_gpu=False, device=None):
 
         x1, x2 = torch.chunk(x, 2, dim=1)
 
         with torch.no_grad():
             x1 = Variable(x1.contiguous())
             x2 = Variable(x2.contiguous())
+            if use_gpu:
+                x1 = to_cuda(x1, device)
+                x2 = to_cuda(x2, device)
 
-            x1_ = possible_downsample(x1, in_channels, out_channels, subsample)
-            x2_ = possible_downsample(x2, in_channels, out_channels, subsample)
+            x1_ = possible_downsample(x1, in_channels, out_channels,
+                                      subsample, use_gpu, device)
+            x2_ = possible_downsample(x2, in_channels, out_channels,
+                                      subsample, use_gpu, device)
 
             f_x2 = rev_block_function.residual(x2,
                                                in_channels,
@@ -85,7 +87,7 @@ class rev_block_function(Function):
             y1 = f_x2 + x1_
             
             g_y1 = rev_block_function.residual(y1,
-                                               out_channels,  # FIX ??
+                                               out_channels,
                                                out_channels,
                                                g_modules)
 
@@ -99,15 +101,19 @@ class rev_block_function(Function):
         return y
 
     @staticmethod
-    def _backward(output, in_channels, out_channels, f_modules, g_modules):
+    def _backward(output, in_channels, out_channels, f_modules, g_modules,
+                  use_gpu=False, device=None):
 
         y1, y2 = torch.chunk(output, 2, dim=1)
         with torch.no_grad():
             y1 = Variable(y1.contiguous())
             y2 = Variable(y2.contiguous())
+            if use_gpu:
+                y1 = to_cuda(y1, device)
+                y2 = to_cuda(y2, device)
 
             x2 = y2 - rev_block_function.residual(y1,
-                                                  out_channels, # FIX ??
+                                                  out_channels,
                                                   out_channels,
                                                   g_modules)
 
@@ -124,7 +130,7 @@ class rev_block_function(Function):
 
     @staticmethod
     def _grad(x, dy, in_channels, out_channels, f_modules, g_modules,
-              activations, subsample=False):
+              activations, subsample=False, use_gpu=False, device=None):
         dy1, dy2 = Variable.chunk(dy, 2, dim=1)
 
         x1, x2 = torch.chunk(x, 2, dim=1)
@@ -134,9 +140,14 @@ class rev_block_function(Function):
             x2 = Variable(x2.contiguous(), requires_grad=True)
             x1.retain_grad()
             x2.retain_grad()
+            if use_gpu:
+                x1 = to_cuda(x1, device)
+                x2 = to_cuda(x2, device)
 
-            x1_ = possible_downsample(x1, in_channels, out_channels, subsample)
-            x2_ = possible_downsample(x2, in_channels, out_channels, subsample)
+            x1_ = possible_downsample(x1, in_channels, out_channels,
+                                      subsample, use_gpu, device)
+            x2_ = possible_downsample(x2, in_channels, out_channels,
+                                      subsample, use_gpu, device)
 
             f_x2 = rev_block_function.residual(x2,
                                                in_channels,
@@ -146,7 +157,7 @@ class rev_block_function(Function):
             y1_ = f_x2 + x1_
 
             g_y1 = rev_block_function.residual(y1_,
-                                               out_channels,    # FIX ??
+                                               out_channels,
                                                out_channels,
                                                g_modules)
 
@@ -179,7 +190,8 @@ class rev_block_function(Function):
 
     @staticmethod
     def forward(ctx, x, in_channels, out_channels, f_modules, g_modules,
-                activations, subsample=False, *args):
+                activations, subsample=False, use_gpu=False, device=None,
+                *args):
         """Compute forward pass including boilerplate code.
 
         This should not be called directly, use the apply method of this class.
@@ -193,6 +205,8 @@ class rev_block_function(Function):
             g_modules (List):               Sequence of modules for G function
             activations (List):             Activation stack
             subsample (bool):               Whether to do 2x spatial pooling
+            use_gpu (bool):                 Whether to use gpu
+            device (int)                    GPU to use
             *args:                          Should contain all the
                                             Parameters of the module
         """
@@ -210,13 +224,17 @@ class rev_block_function(Function):
         ctx.f_modules = f_modules
         ctx.g_modules = g_modules
         ctx.subsample = subsample
+        ctx.use_gpu = use_gpu
+        ctx.device = device
 
         y = rev_block_function._forward(x,
                                         in_channels,
                                         out_channels,
                                         f_modules,
                                         g_modules,
-                                        subsample)
+                                        subsample,
+                                        use_gpu,
+                                        device)
 
         return y.data
 
@@ -232,7 +250,9 @@ class rev_block_function(Function):
                                              ctx.in_channels,
                                              ctx.out_channels,
                                              ctx.f_modules,
-                                             ctx.g_modules)
+                                             ctx.g_modules,
+                                             ctx.use_gpu,
+                                             ctx.device)
 
         dx, dfw, dgw = rev_block_function._grad(x,
                                                 grad_out,
@@ -241,26 +261,78 @@ class rev_block_function(Function):
                                                 ctx.f_modules,
                                                 ctx.g_modules,
                                                 ctx.activations,
-                                                ctx.subsample)
+                                                ctx.subsample,
+                                                ctx.use_gpu,
+                                                ctx.device)
 
-        return (dx,) + (None,)*6 + tuple(dfw) + tuple(dgw)
+        return (dx,) + (None,)*8 + tuple(dfw) + tuple(dgw)
 
 
 class rev_block(nn.Module):
     def __init__(self, in_channels, out_channels, activations,
-                 f_modules, g_modules, subsample=False):
+                 f_modules=None, g_modules=None, subsample=False,
+                 use_gpu=False, device=None):
         super(rev_block, self).__init__()
         # NOTE: channels are only counted for possible_downsample()
-        self.in_channels = in_channels // 2
-        self.out_channels = out_channels // 2
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         self.activations = activations
-        self.f_modules = f_modules
-        self.g_modules = g_modules
+        self.f_modules = f_modules if f_modules is not None else []
+        self.g_modules = g_modules if g_modules is not None else []
         self.subsample = subsample
-        #self.reset_parameters()
+        self.use_gpu = use_gpu
+        self.device = device
+        
+    def cuda(self, device=None):
+        self.use_gpu = True
+        self.device = device
+        for m in self.f_modules:
+            m.cuda(device)
+        for m in self.g_modules:
+            m.cuda(device)
+        return self
+        
+    def cpu(self):
+        self.use_gpu = False
+        for m in self.f_modules:
+            m.cpu()
+        for m in self.g_modules:
+            m.cpu()
+        return self
 
-    def reset_parameters(self):
-        pass
+    '''
+    Only keyword arguments are allowed because the following arguments must
+    be handled differently for f_modules and g_modules:
+    
+    in_channels, out_channels, stride
+    '''
+    def add_module(self, module, in_channels=None, out_channels=None,
+                   stride=None, **kwargs):
+        f_kwargs = dict(kwargs.items())
+        g_kwargs = dict(kwargs.items())
+        if in_channels is not None:
+            f_kwargs['in_channels'] = in_channels
+        if out_channels is not None:
+            f_kwargs['out_channels'] = out_channels
+            g_kwargs['in_channels'] = out_channels
+            g_kwargs['out_channels'] = out_channels
+        if stride is not None:
+            f_kwargs['stride'] = stride
+        self.f_modules.append(module(**f_kwargs))
+        self.g_modules.append(module(**g_kwargs))
+        self._register_module(self.f_modules[-1])
+        self._register_module(self.g_modules[-1])
+        
+    def _register_module(self, module):
+        i = 0
+        try:
+            name = module.__name__
+        except AttributeError:
+            name = module.__class__.__name__
+        while '{}_{}'.format(name, i) in self._modules:
+            i += 1
+        name = '{}_{}'.format(name, i)
+        super(rev_block, self).add_module(name=name, module=module)
 
     def forward(self, x):
         # Unpack parameters and buffers
@@ -268,55 +340,13 @@ class rev_block(nn.Module):
         g_params, g_buffs = unpack_modules(self.g_modules)
         
         return rev_block_function.apply(x,
-                                        self.in_channels,
-                                        self.out_channels,
+                                        self.in_channels//2,
+                                        self.out_channels//2,
                                         self.f_modules,
                                         self.g_modules,
                                         self.activations,
                                         self.subsample,
+                                        self.use_gpu,
+                                        self.device,
                                         *f_params,
                                         *g_params)
-
-
-class simple_block(rev_block):
-    def __init__(self, in_channels, out_channels, activations,
-                 subsample=False):
-        f_modules = [convolution(in_channels=in_channels//2,
-                                 out_channels=out_channels//2,
-                                 kernel_size=3,
-                                 ndim=2,
-                                 init='kaiming_normal',
-                                 padding=1)]
-        g_modules = [convolution(in_channels=in_channels//2,
-                                 out_channels=out_channels//2,
-                                 kernel_size=3,
-                                 ndim=2,
-                                 init='kaiming_normal',
-                                 padding=1)]
-        super(simple_block, self).__init__(in_channels=in_channels,
-                                           out_channels=out_channels,
-                                           activations=activations,
-                                           f_modules=f_modules,
-                                           g_modules=g_modules,
-                                           subsample=False)
-        
-
-class simple_net(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(simple_net, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.activations = []
-        self.layers = [simple_block(in_channels=in_channels,
-                                    out_channels=out_channels,
-                                    activations=self.activations)]
-        
-    def forward(self, x):
-        out = x
-        for l in self.layers:
-            out = l(x)
-            
-        # Save last output for backward
-        self.activations.append(out.data)
-        
-        return out
