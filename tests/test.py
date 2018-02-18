@@ -48,7 +48,7 @@ class simple_net(nn.Module):
             out = l(x)
             
         # Save last output for backward
-        self.activations.append(out.data)
+        self.activations.append(out)
         
         return out
 
@@ -58,10 +58,11 @@ class trivial_module(torch.nn.Module):
         return x*2
 
 if __name__=='__main__':
-    print("TESTING: _forward()")
-    model = simple_net(in_channels=4, out_channels=4)
     data = np.random.rand(5,4,25,25).astype(np.float32)
     data = Variable(torch.from_numpy(data))
+    
+    print("TESTING: _forward()")
+    model = simple_net(in_channels=4, out_channels=4)
     try:
         out = model(data)
     except:
@@ -74,9 +75,6 @@ if __name__=='__main__':
               "wrong size {}.".format(data.size(), out.size()))
     
     print("TESTING INPUT RECREATION: _forward(), _backward()")
-    data = np.random.rand(5,4,25,25).astype(np.float32)
-    #data = np.ones((1,4,1,1), dtype=np.float32)
-    data = torch.from_numpy(data)
     f_modules = [convolution(in_channels=2,
                              out_channels=2,
                              kernel_size=3,
@@ -99,7 +97,7 @@ if __name__=='__main__':
                                          out_channels=2,
                                          f_modules=f_modules,
                                          g_modules=g_modules)
-        z = _rev_block_function._backward(y.data,
+        z = _rev_block_function._backward(y,
                                           f_modules=f_modules,
                                           g_modules=g_modules)
     except:
@@ -113,8 +111,6 @@ if __name__=='__main__':
 
     print("TESTING: backward()")
     model = simple_net(in_channels=4, out_channels=4)
-    data = np.random.rand(5,4,25,25).astype(np.float32)
-    data = Variable(torch.from_numpy(data))
     out = model(data)
     out = out.mean()
     try:

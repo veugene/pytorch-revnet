@@ -66,8 +66,8 @@ class _rev_block_function(Function):
         x1, x2 = torch.chunk(x, 2, dim=1)
 
         with torch.no_grad():
-            x1 = Variable(x1.contiguous())
-            x2 = Variable(x2.contiguous())
+            x1 = Variable(x1.data.contiguous())
+            x2 = Variable(x2.data.contiguous())
             if use_gpu:
                 x1 = _to_cuda(x1, device)
                 x2 = _to_cuda(x2, device)
@@ -99,8 +99,8 @@ class _rev_block_function(Function):
 
         y1, y2 = torch.chunk(output, 2, dim=1)
         with torch.no_grad():
-            y1 = Variable(y1.contiguous())
-            y2 = Variable(y2.contiguous())
+            y1 = Variable(y1.data.contiguous())
+            y2 = Variable(y2.data.contiguous())
             if use_gpu:
                 y1 = _to_cuda(y1, device)
                 y2 = _to_cuda(y2, device)
@@ -112,7 +112,6 @@ class _rev_block_function(Function):
             x1 = y1 - _rev_block_function.residual(x2, f_modules)
 
             del y1, y2
-            x1, x2 = x1.data, x2.data
 
             x = torch.cat((x1, x2), 1)
         return x
@@ -120,13 +119,12 @@ class _rev_block_function(Function):
     @staticmethod
     def _grad(x, dy, in_channels, out_channels, f_modules, g_modules,
               activations, subsample=False, use_gpu=False, device=None):
-        dy1, dy2 = Variable.chunk(dy, 2, dim=1)
-
+        dy1, dy2 = torch.chunk(dy, 2, dim=1)
         x1, x2 = torch.chunk(x, 2, dim=1)
 
         with torch.enable_grad():
-            x1 = Variable(x1.contiguous(), requires_grad=True)
-            x2 = Variable(x2.contiguous(), requires_grad=True)
+            x1 = Variable(x1.data.contiguous(), requires_grad=True)
+            x2 = Variable(x2.data.contiguous(), requires_grad=True)
             x1.retain_grad()
             x2.retain_grad()
             if use_gpu:
@@ -218,10 +216,11 @@ class _rev_block_function(Function):
                                          f_modules,
                                          g_modules,
                                          subsample,
+                                         ndim,
                                          use_gpu,
                                          device)
 
-        return y.data
+        return y
 
     @staticmethod
     def backward(ctx, grad_out):

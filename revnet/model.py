@@ -80,7 +80,7 @@ class revnet(base_model):
     def forward(self, x):
         for layer in self.layers:
             x = layer(x)
-        self.activations.append(x.data)
+        self.activations.append(x)
         x = F.relu(self.bn_last(x))
         x = F.avg_pool2d(x, x.size(2))
         x = x.view(x.size(0), -1)
