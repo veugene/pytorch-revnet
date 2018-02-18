@@ -5,8 +5,8 @@ from torch.autograd import Variable
 import numpy as np
 
 from revnet.blocks import (rev_block,
-                           _rev_block_function)
-from fcn_maker.blocks import convolution
+                           _rev_block_function,
+                           convolution)
 
 
 class simple_block(rev_block):

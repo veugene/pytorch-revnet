@@ -416,6 +416,100 @@ class batch_normalization(nn.Module):
     def forward(self, x):
         return self.norm(x)
     
+    
+"""
+Return AlphaDropout if nonlinearity is 'SELU', else Dropout.
+"""
+def get_dropout(nonlin=None):
+    if nonlin=='SELU':
+        return torch.nn.AlphaDropout
+    return torch.nn.Dropout
+
+
+"""
+Return a nonlinearity from the core library or return the provided function.
+"""
+def get_nonlinearity(nonlin):
+    if nonlin is None:
+        class identity_activation(torch.nn.Module):
+            def __init__(self):
+                super(identity_activation, self).__init__()
+            def forward(self, input):
+                return input
+        return identity_activation()
+        
+    # Identify function.
+    func = None
+    if isinstance(nonlin, str):
+        # Find the nonlinearity by name.
+        try:
+            func = getattr(torch.nn.modules.activation, nonlin)
+        except AttributeError:
+            raise ValueError("Specified nonlinearity ({}) not found."
+                             "".format(nonlin))
+    else:
+        # Not a name; assume a module is passed instead.
+        func = nonlin
+        
+    return func
+
+
+"""
+Return an initializer from the core library or return the provided function.
+"""
+def get_initializer(init):
+    if init is None:
+        return None
+        
+    # Unpack keyword arguments if they are passed.
+    kwargs = None
+    if not isinstance(init, str) and hasattr(init, '__len__'):
+        init, kwargs = init
+    
+    # Identify function.
+    func = None
+    if isinstance(init, str):
+        # Find the initializer by name.
+        try:
+            func = getattr(torch.nn.init, init)
+        except AttributeError:
+            raise ValueError("Specified initializer ({}) not found."
+                             "".format(init))
+    else:
+        # Not a name; assume a function is passed instead.
+        func = init
+        
+    # Include keyword arguments if they exist, using a closure.
+    if kwargs is not None:
+        def _func(x):
+            return func(x, **kwargs)
+        func = _func
+        
+    return func
+    
+"""
+Select 2D or 3D as argument (ndim) and initialize weights on creation.
+"""
+class convolution(torch.nn.Module):
+    def __init__(self, ndim=2, init=None, *args, **kwargs):
+        super(convolution, self).__init__()
+        if ndim==2:
+            conv = torch.nn.Conv2d
+        elif ndim==3:
+            conv = torch.nn.Conv3d
+        else:
+            ValueError("ndim must be 2 or 3")
+        self.ndim = ndim
+        self.init = init
+        self.op = conv(*args, **kwargs)
+        self.in_channels = self.op.in_channels
+        self.out_channels = self.op.out_channels
+        if init is not None:
+            get_initializer(init)(self.op.weight.data)
+        
+    def forward(self, input):
+        return self.op(input)
+    
 
 class basic_block(rev_block):
     """
@@ -426,18 +520,26 @@ class basic_block(rev_block):
         out_channels (int) : The number of output channels.
         activations (list) : List to track activations, as in rev_block.
         subsample (bool) : Whether to perform 2x spatial subsampling.
+        dilation (int) : The dilation of the first convolution.
+        dropout (float) : Dropout probability.
+        init (string or function) : Convolutional kernel initializer.
+        nonlinearity (string or function) : Nonlinearity.
         ndim (int) : Number of spatial dimensions (1, 2 or 3).
         
     Returns:
         out (Variable): The result of the computation.
     """
     def __init__(self, in_channels, out_channels, activations,
-                 subsample=False, ndim=2):
+                 subsample=False, dilation=1, dropout=0.,
+                 init='kaiming_normal', nonlinearity='ReLU', ndim=2):
         super(basic_block, self).__init__(in_channels=in_channels,
                                           out_channels=out_channels,
                                           activations=activations,
                                           subsample=subsample)
         self.dilation = dilation
+        self.dropout = dropout
+        self.init = init
+        self.nonlinearity = nonlinearity
         self.ndim = ndim
         
         # Build block.
@@ -445,8 +547,10 @@ class basic_block(rev_block):
                         ndim=ndim,
                         in_channels=in_channels//2,
                         out_channels=out_channels//2)
-        self.add_module(nn.ReLU)
-        self.add_module(nn.Conv2d,
+        self.add_module(get_nonlinearity(nonlinearity))
+        self.add_module(convolution,
+                        ndim=ndim,
+                        init=init,
                         kernel_size=3,
                         padding=dilation,
                         stride=2 if subsample else 1,
@@ -454,14 +558,16 @@ class basic_block(rev_block):
                         in_channels=in_channels//2,
                         out_channels=out_channels//2)
         if dropout > 0:
-            self.add_module(torch.nn.Dropout,
+            self.add_module(get_dropout(nonlinearity),
                             p=dropout)
         self.add_module(batch_normalization,
                         ndim=ndim,
                         in_channels=out_channels//2,
                         out_channels=out_channels//2)
-        self.add_module(nn.ReLU)
-        self.add_module(nn.Conv2d,
+        self.add_module(get_nonlinearity(nonlinearity))
+        self.add_module(convolution,
+                        ndim=ndim,
+                        init=init,
                         kernel_size=3,
                         padding=1,
                         in_channels=out_channels//2,
